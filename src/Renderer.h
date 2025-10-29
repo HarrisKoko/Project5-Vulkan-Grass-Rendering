@@ -79,4 +79,10 @@ private:
 
     std::vector<VkCommandBuffer> commandBuffers;
     VkCommandBuffer computeCommandBuffer;
+
+    // Added:
+    VkDescriptorSetLayout computeDescriptorSetLayout;
+
+    std::vector<VkDescriptorSet> grassDescriptorSets;
+    std::vector<VkDescriptorSet> computeDescriptorSets;
 };
