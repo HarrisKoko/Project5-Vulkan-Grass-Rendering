@@ -14,9 +14,9 @@ layout(location = 0) out vec4 outFragColor;
 
 void main() {
     // Define grass color palette
-    vec4 grassDark = vec4(0.0, 0.25, 0.0, 1.0);      // Dark green at base
+    vec4 grassDark = vec4(0.0, 0.1, 0.0, 1.0);      // Dark green at base
     vec4 grassMid = vec4(0.0, 0.5, 0.0, 1.0);        // Mid green in middle
-    vec4 grassLight = vec4(0.2, 0.8, 0.2, 1.0);      // Light green at tip
+    vec4 grassLight = vec4(0.5, 0.8, 0.5, 1.0);      // Light green at tip
     
     // Calculate lighting based on surface normal
     vec3 upVector = vec3(0.0, 1.0, 0.0);

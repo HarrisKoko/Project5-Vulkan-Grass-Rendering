@@ -1,3 +1,4 @@
+// Grass forces and culling based on Responsive Real-Time Grass Rendering for General 3D Scenes Paper
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #define WORKGROUP_SIZE 32
@@ -20,18 +21,20 @@ struct Blade {
     vec4 up;
 };
 
-// TODO: Add bindings to:
+// Add bindings to:
 // 1. Store the input blades
 layout(set = 2, binding = 0) buffer InputBlades {
     Blade inputBlades[];
 };
 
 // 2. Write out the culled blades
+
 layout(set = 2, binding = 1) buffer CulledBlades {
     Blade culledBlades[];
 };
 
 // 3. Write the total number of blades remaining
+
 layout(set = 2, binding = 2) buffer IndirectDrawBuffer {
     uint vertexCount;
     uint instanceCount;
@@ -42,20 +45,136 @@ layout(set = 2, binding = 2) buffer IndirectDrawBuffer {
 void main() {
     uint bladeIndex = gl_GlobalInvocationID.x;
     
-    // Only process if within blade count
+    if (bladeIndex == 0) {
+        drawParams.vertexCount = 0;
+    }
+    barrier();
+    
     if (bladeIndex < 8192) {
-        // Get blade data
         Blade currentBlade = inputBlades[bladeIndex];
         
-        // TODO: Apply forces on every blade and update the vertices in the buffer
-        // TODO: Cull blades that are too far away or not in the camera frustum and write them to the culled blades buffer
-        // Note: to do this, you will need to use an atomic operation to read and update drawParams.vertexCount
-        // You want to write the visible blades to the buffer without write conflicts between threads
+        vec3 v0 = currentBlade.v0.xyz;
+        vec3 v1 = currentBlade.v1.xyz;
+        vec3 v2 = currentBlade.v2.xyz;
+        vec3 up = currentBlade.up.xyz;
         
-        // For now, just copy all blades
-        culledBlades[bladeIndex] = currentBlade;
+        float bladeHeight = currentBlade.v1.w;
+        float bladeWidth = currentBlade.v2.w;
+        float stiffness = currentBlade.up.w;
+        float bladeDirection = currentBlade.v0.w;
         
-        // Increment visible blade counter atomically
-        atomicAdd(drawParams.vertexCount, 1);
+        // Calculate gravity force
+        vec4 D = vec4(0.0, -1.0, 0.0, 9.8);
+
+        // Environmental gravity
+        vec3 gE = normalize(D.xyz) * D.w;
+        
+        // Front direction of the blade
+        vec3 orientationVec = vec3(cos(bladeDirection), 0.0, -sin(bladeDirection));
+        vec3 frontDir = normalize(cross(up, orientationVec));
+        
+        // Front gravity contribution
+        vec3 gF = 0.25f * length(gE) * frontDir;
+        
+        // Total gravity
+        vec3 g = gE + gF;
+        
+        // Recovery force
+        vec3 iv2 = v0 + bladeHeight * up;
+        vec3 r = (iv2 - v2) * stiffness ;
+        
+        // Wind force
+        vec3 windDir = normalize(vec3(
+            sin(totalTime * 0.5 + v0.x * 0.1),
+            0.0,
+            cos(totalTime * 0.3 + v0.z * 0.1)
+        ));
+        
+        // Wind alignment
+        float windAlignment = dot(windDir, frontDir);
+        windAlignment = windAlignment * windAlignment; 
+        
+        // Height ratio
+        float heightRatio = length(v2 - v0) / bladeHeight;
+        heightRatio = clamp(heightRatio, 0.0, 1.0);
+        
+        // Wind force magnitude
+        float windStrength = 8.0f;
+        vec3 w = windDir * windAlignment * heightRatio * windStrength;
+        
+        // Total force on v2
+        vec3 totalForce = g + r + w;
+        
+        v2 += totalForce * deltaTime * 5.0;
+        
+        // From 5.2 of Responsive Real-Time Grass Rendering for General 3D Scenes
+        v2 = v2 - up * min(dot(up, v2 - v0), 0.0f);
+        
+        vec3 l_proj = v2 - v0 - up * (dot((v2 - v0), up));
+
+        v1 = v0 + bladeHeight * up * max(1.f - l_proj / bladeHeight, 0.05f * max(l_proj / bladeHeight, 1.0f));
+        v2 -= up * min(dot(up, v2 - v0), 0.0f);
+
+        float L0 = distance(v0, v2);
+        float L1 = distance(v0, v1) + distance(v1, v2);
+        float L = 0.5f  * (L0 + L1);
+        float r2 = bladeHeight / L;
+        v1 = v0 + r2 * (v1 - v0);
+        v2 = v1 + r2 * (v2 - v1);
+
+        bool visible = true;
+        
+        // Toggle these to enable/disable culling
+        const bool ENABLE_ORIENTATION_CULLING = true;
+        const bool ENABLE_FRUSTUM_CULLING = true;
+        const bool ENABLE_DISTANCE_CULLING = true;
+
+        // Culling: start with visible = true then test each culling type. If it should be culled, set visible to false, skip rest and don't render this blade.
+        
+        // Orientation culling
+        vec3 cameraPos = vec3(inverse(camera.view)[3]);
+        vec3 viewDir = vec3(camera.view[0][2], camera.view[1][2], camera.view[2][2]);
+        if (ENABLE_ORIENTATION_CULLING && abs(dot(viewDir, frontDir)) > 0.9) {
+            visible = false;
+        }
+        
+        // Frustum culling
+        if (visible && ENABLE_FRUSTUM_CULLING) {
+            vec4 v0Clip = camera.proj * (camera.view * vec4(v0, 1.0));
+            vec4 v2Clip = camera.proj * (camera.view * vec4(v2, 1.0));
+            vec3 m = 0.25 * v0 + 0.5 * v1 + 0.25 * v2;
+            vec4 mClip = camera.proj * (camera.view * vec4(m, 1.0));
+            
+            float tolerance = 1.5;
+            
+            bool v0InFrustum = abs(v0Clip.x) <= v0Clip.w * tolerance && abs(v0Clip.y) <= v0Clip.w * tolerance && v0Clip.z >= -v0Clip.w && v0Clip.z <= v0Clip.w;
+            
+            bool v2InFrustum = abs(v2Clip.x) <= v2Clip.w * tolerance && abs(v2Clip.y) <= v2Clip.w * tolerance && v2Clip.z >= -v2Clip.w && v2Clip.z <= v2Clip.w;
+            
+            bool mInFrustum = abs(mClip.x) <= mClip.w * tolerance && abs(mClip.y) <= mClip.w * tolerance && mClip.z >= -mClip.w && mClip.z <= mClip.w;
+            
+            if (!v0InFrustum && !v2InFrustum && !mInFrustum) {
+                visible = false;
+            }
+        }
+        
+        //Distance Culling
+        if (visible && ENABLE_DISTANCE_CULLING) {
+            vec3 camPos = inverse(camera.view)[3].xyz;
+            float distance_projection = length(v0 - camPos - up * (dot(v0 - camPos, up)));
+
+            if (distance_projection > 25.0) {
+		        visible = false;
+	        }
+        }
+        
+        if (visible) {
+            Blade updatedBlade = currentBlade;
+            updatedBlade.v1 = vec4(v1, bladeHeight);
+            updatedBlade.v2 = vec4(v2, bladeWidth);
+            
+            uint writeIndex = atomicAdd(drawParams.vertexCount, 1);
+            culledBlades[writeIndex] = updatedBlade;
+        }
     }
 }
