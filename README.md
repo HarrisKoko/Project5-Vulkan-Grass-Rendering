@@ -25,6 +25,7 @@ Each blade is defined by three control points v0, v1, v2 forming a quadratic Bé
 * v2 = tip affected by forces
 * v1 = intermediate control derived from v0,v2
 
+![bez](img/blade_model.jpg)
 
 ### Physics
 For each frame, the compute shader updates all blades in parallel. It computes gravity, recovery, and wind forces and applies them to each grass blade.
@@ -33,15 +34,20 @@ We seperate gravity into two terms, environmental (gE) and front (gF).
 
 gE is the environmental gravity vector applied uniformly to all blades.
 It represents the constant downward pull of gravity on the tip of each blade, modeled as:
+
 ![ge](img/ge.png)
 
 gF is the front-facing gravity component, added to tilt the blade slightly in the direction it’s facing, producing a more natural lean instead of purely vertical bending.
+
 ![gf](img/gf.png)
 
 These two forces are added together to get the total gravity force.
 
 The recovery force restores each blade tip back toward its rest position. This counteracts bending caused by gravity and wind. It is like a spring damping force. It is modeled as:
+
 ![r](img/r.png)
+
+In this implementation, I use 0.1 in place of the final term in order to increase simplicty without reducing quality.
 
 The wind force introduces dynamic, time-dependent bending to simulate airflow across the grass field.
 Instead of using precomputed flow fields like in the paper, this implementation defines wind procedurally using trigonometric variation over both time and position, giving a natural wave motion that travels across the scene.
@@ -58,16 +64,20 @@ Orientation culling removes blades that are almost parallel to the camera’s vi
 When a blade is seen nearly from the side, its thin geometry contributes little visually but adds unnecessary tessellation cost.
 
 The algorithm computes the dot product between the camera forward vector and the blade’s front direction:
+
 ![ori](img/ori.png)
 
 Frustum culling discards blades outside the camera’s visible volume.
 Each blade’s base (v0), tip (v2), and midpoint (m) are transformed into clip space:
+
 ![view](img/frustum.png)
+
 If all three points lie outside the frustum, the blade is culled.
 This ensures that only blades potentially visible in the camera’s view are sent to tessellation and rasterization.
 
 Distance culling removes blades too far from the camera (in this case, more than 25 units away).
 It computes the projected horizontal distance from the blade’s root (v0) to the camera position (camPos):
+
 ![dist](img/dist.png)
 
 If a grass blade passes all three of these tests, it can be rendered. 
@@ -75,11 +85,15 @@ If a grass blade passes all three of these tests, it can be rendered.
 ### Performance
 
 This Vulkan Grass Renderer was tested at varying numbers of grass blades as shown below.
+
 ![p1](img/performance.png)
+
 As we from this chart, the performance of this renderer is able to produce high frame rates even through extremely high numbers of grass blades to simulate. The extreme fall off of performance is because it is tested on exponentially increasing numbers of grass blades. 
 
 Additionally, we can calculate the performance increase due to the culling optimizations. 
+
 ![p2](img/culling.png)
+
 As this chart shows, at 65536 grass blades, there is almost a 100FPS improvement using the three culling methods implemented. This equates to over a 50% speedup for the renderer, proving culling to be a substantial improvement. This test primarily focuses on frustum and orientation culling as the distance culling was not utilized since the camera was close to the grass. Distance culling adds even further improvement to games and rendering when we do not want to render grass that is far away from the camera/player.
 
 
